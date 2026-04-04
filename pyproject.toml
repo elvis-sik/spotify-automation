@@ -13,7 +13,16 @@ dependencies = [
 
 [project.scripts]
 spotify-automation = "spotify_automation:main"
+spotify-smoke-test = "spotify_automation:smoke_test"
+spotify-test-run = "spotify_automation:test_run"
+spotify-playlist-only = "spotify_automation:playlist_only"
 
 [build-system]
 requires = ["uv_build>=0.11.3,<0.12.0"]
 build-backend = "uv_build"
+
+[tool.uv]
+exclude-newer = "7 days"
+
+[tool.uv.pip]
+exclude-newer = "7 days"
