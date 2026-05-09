@@ -1,21 +1,20 @@
 [project]
 name = "spotify-automation"
 version = "0.1.0"
-description = "Add your description here"
+description = "Discover the latest Concrete Avalanche issue, match it to Spotify, and sync it."
 readme = "README.md"
 authors = [
     { name = "Elvis Sikora", email = "elvis.sikora@gmail.com" }
 ]
 requires-python = ">=3.13"
 dependencies = [
+    "openai>=1.107.0",
     "spotipy>=2.26.0",
 ]
 
 [project.scripts]
-spotify-automation = "spotify_automation:main"
-spotify-smoke-test = "spotify_automation:smoke_test"
-spotify-test-run = "spotify_automation:test_run"
-spotify-playlist-only = "spotify_automation:playlist_only"
+spotify-automation = "spotify_automation.cli:main"
+spotify-smoke-test = "spotify_automation.cli:smoke_test"
 
 [build-system]
 requires = ["uv_build>=0.11.3,<0.12.0"]
