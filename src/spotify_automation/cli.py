@@ -10,6 +10,7 @@ from threading import Lock
 from typing import Sequence
 
 from openai import RateLimitError
+from spotipy.exceptions import SpotifyException
 
 from spotify_automation.buy_music_club import BUY_MUSIC_CLUB_USER_URL, fetch_latest_list, fetch_list
 from spotify_automation.catalog import entries_for_list, items_to_process, read_catalog, upsert_entries
@@ -19,6 +20,7 @@ from spotify_automation.matcher import (
     choose_matches_heuristically,
     choose_matches_with_openai,
     collect_candidates,
+    spotify_search_settings_summary,
 )
 from spotify_automation.models import (
     BuyMusicClubItem,
@@ -160,6 +162,13 @@ def _rate_limit_delay(error: RateLimitError, attempt_index: int) -> float:
     if match:
         return float(match.group(1)) + 1.0
     return min(60.0, 2.0 ** attempt_index)
+
+
+def _spotify_retry_after(error: SpotifyException) -> str:
+    retry_after = (error.headers or {}).get("Retry-After")
+    if retry_after:
+        return f" Retry-After={retry_after}s."
+    return ""
 
 
 def _no_match_decision(item: BuyMusicClubItem, notes: str) -> SpotifyWebMatch:
@@ -307,11 +316,25 @@ def _fill_issue_openai_misses_from_spotify_api(
         print(f"Spotify API fallback skipped for {len(missed_items)} OpenAI miss(es): {error}")
         return decisions
 
-    print(f"Checking {len(missed_items)} OpenAI no-match item(s) with Spotify API fallback...")
+    print(
+        f"Checking {len(missed_items)} OpenAI no-match item(s) with Spotify API fallback;"
+        f" {spotify_search_settings_summary()}."
+    )
     candidate_map: dict[str, list[SpotifyCandidate]] = {}
+    processed_ids: set[str] = set()
+    rate_limit_note: str | None = None
     for item in missed_items:
-        candidates = collect_candidates(search_client, item)
+        try:
+            candidates = collect_candidates(search_client, item)
+        except SpotifyException as error:
+            if error.http_status == 429:
+                rate_limit_note = f"Spotify API fallback stopped because Spotify returned a rate limit.{_spotify_retry_after(error)}"
+                print(f"  {rate_limit_note}")
+                break
+            print(f"  Spotify API fallback failed for {item.artist} - {item.track}: {error}")
+            candidates = []
         candidate_map[item.source_id] = candidates
+        processed_ids.add(item.source_id)
         print(f"  Collected {len(candidates)} Spotify candidates for {item.artist} - {item.track}")
 
     heuristic_decisions = choose_matches_heuristically(missed_items, candidate_map)
@@ -322,6 +345,9 @@ def _fill_issue_openai_misses_from_spotify_api(
         fallback_decision = heuristic_decisions[item.source_id]
         fallback_match = _web_match_from_heuristic_decision(item, fallback_decision, candidates)
         if fallback_match is None:
+            fallback_notes = fallback_decision.notes
+            if rate_limit_note and item.source_id not in processed_ids:
+                fallback_notes = rate_limit_note
             merged[item.source_id] = SpotifyWebMatch(
                 source_id=original.source_id,
                 decision=original.decision,
@@ -329,7 +355,7 @@ def _fill_issue_openai_misses_from_spotify_api(
                 spotify_url=original.spotify_url,
                 spotify_title=original.spotify_title,
                 confidence=original.confidence,
-                notes=f"{original.notes} Spotify API fallback: {fallback_decision.notes}",
+                notes=f"{original.notes} Spotify API fallback: {fallback_notes}",
             )
             continue
 

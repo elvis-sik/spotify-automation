@@ -30,7 +30,11 @@ def get_search_client() -> spotipy.Spotify:
         client_id=values["SPOTIPY_CLIENT_ID"],
         client_secret=values["SPOTIPY_CLIENT_SECRET"],
     )
-    return spotipy.Spotify(auth_manager=auth_manager)
+    return spotipy.Spotify(
+        auth_manager=auth_manager,
+        retries=0,
+        status_retries=0,
+    )
 
 
 def get_user_client() -> spotipy.Spotify:

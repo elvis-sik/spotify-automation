@@ -19,7 +19,9 @@ from spotify_automation.utils import (
 
 DEFAULT_OPENAI_MODEL = "gpt-5.5"
 DEFAULT_CANDIDATE_LIMIT = 8
-DEFAULT_SEARCH_MARKETS = ("", "US", "BR", "CA", "GB", "HK", "TW", "JP", "SG", "AU")
+DEFAULT_SEARCH_MARKETS = ("BR", "")
+DEFAULT_MAX_SEARCH_REQUESTS_PER_ITEM = 8
+CONFIDENT_CANDIDATE_SCORE = 0.98
 SPOTIFY_URL_PATTERN = re.compile(
     r"^https://open\.spotify\.com/(?:intl-[a-z]{2}/)?(?P<link_type>album|track)/(?P<spotify_id>[A-Za-z0-9]+)(?:[/?#].*)?$"
 )
@@ -143,6 +145,21 @@ def _search_markets() -> tuple[str, ...]:
     return markets or DEFAULT_SEARCH_MARKETS
 
 
+def _max_search_requests_per_item() -> int:
+    raw_value = os.environ.get("SPOTIFY_AUTOMATION_MAX_SEARCH_REQUESTS_PER_ITEM")
+    if raw_value is None:
+        return DEFAULT_MAX_SEARCH_REQUESTS_PER_ITEM
+    try:
+        return max(1, int(raw_value))
+    except ValueError:
+        return DEFAULT_MAX_SEARCH_REQUESTS_PER_ITEM
+
+
+def spotify_search_settings_summary() -> str:
+    markets = ", ".join(market or "any" for market in _search_markets())
+    return f"markets=[{markets}], max_requests_per_item={_max_search_requests_per_item()}"
+
+
 def heuristic_score(item: BuyMusicClubItem, candidate: SpotifyCandidate) -> float:
     title_score = similarity(_target_title(item, candidate.link_type), candidate.title)
     track_score = similarity(item.track, candidate.title)
@@ -162,10 +179,8 @@ def collect_candidates(sp, item: BuyMusicClubItem, *, limit: int = DEFAULT_CANDI
     release_hint = item.release_title or item.track
     raw_search_specs = [
         ("track_exact", "track", f'track:{item.track} artist:{item.artist}'),
-        ("track_broad", "track", f"{item.artist} {item.track}"),
         ("track_normalized", "track", f"{item.artist} {normalize_text(item.track)}"),
         ("album_exact", "album", f'album:{release_hint} artist:{item.artist}'),
-        ("album_broad", "album", f"{item.artist} {release_hint}"),
         ("album_normalized", "album", f"{item.artist} {normalize_text(release_hint)}"),
     ]
     search_specs = []
@@ -182,7 +197,7 @@ def collect_candidates(sp, item: BuyMusicClubItem, *, limit: int = DEFAULT_CANDI
             seen_queries.add(query_key)
 
     candidates: dict[str, SpotifyCandidate] = {}
-    for query_hint, search_type, query, market in search_specs:
+    for query_hint, search_type, query, market in search_specs[: _max_search_requests_per_item()]:
         results = sp.search(q=query, type=search_type, limit=limit, market=market or None)
         raw_items = results[f"{search_type}s"]["items"]
         for raw_item in raw_items:
@@ -201,6 +216,8 @@ def collect_candidates(sp, item: BuyMusicClubItem, *, limit: int = DEFAULT_CANDI
             else:
                 candidate.query_hints.append(f"market:{market or 'any'}")
                 candidates[candidate.candidate_id] = candidate
+        if any(candidate.heuristic_score >= CONFIDENT_CANDIDATE_SCORE for candidate in candidates.values()):
+            break
 
     sorted_candidates = sorted(
         candidates.values(),
