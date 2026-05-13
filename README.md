@@ -32,7 +32,7 @@ The intended secrets flow is via 1Password CLI. The checked-in `.env.example` us
 
 `OPENAI_MODEL` defaults to `gpt-5.5`, but you can override it in `.env` if you want a cheaper or different model.
 
-For arbitrary web pages, extraction happens once, then Spotify album matching runs one item at a time with bounded parallelism. Tune it with:
+OpenAI-backed Spotify matching runs one item at a time with bounded parallelism. Tune it with:
 
 ```bash
 SPOTIFY_AUTOMATION_MATCH_CONCURRENCY=3
