@@ -2,8 +2,14 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+from threading import Lock
 from typing import Sequence
+
+from openai import RateLimitError
 
 from spotify_automation.buy_music_club import BUY_MUSIC_CLUB_USER_URL, fetch_latest_list, fetch_list
 from spotify_automation.catalog import entries_for_list, items_to_process, read_catalog, upsert_entries
@@ -32,6 +38,9 @@ from spotify_automation.web_page import fetch_web_page_list
 
 
 ENV_PATH = Path(".env")
+DEFAULT_MATCH_CONCURRENCY = 3
+DEFAULT_MATCH_RETRIES = 3
+RETRY_AFTER_PATTERN = re.compile(r"try again in ([0-9.]+)s", re.IGNORECASE)
 
 
 def load_env_file(path: Path = ENV_PATH) -> None:
@@ -45,6 +54,21 @@ def load_env_file(path: Path = ENV_PATH) -> None:
         key = key.strip()
         value = value.strip().strip('"').strip("'")
         os.environ.setdefault(key, value)
+
+
+def _env_int(name: str, default: int, *, minimum: int = 1, maximum: int | None = None) -> int:
+    raw_value = os.environ.get(name)
+    if raw_value is None:
+        return default
+    try:
+        value = int(raw_value)
+    except ValueError:
+        print(f"Ignoring invalid {name}={raw_value!r}; using {default}.")
+        return default
+    value = max(minimum, value)
+    if maximum is not None:
+        value = min(maximum, value)
+    return value
 
 
 def _entry_from_decision(
@@ -110,6 +134,125 @@ def _print_match_preview(
         print("\nNeeds review / no match:")
         for item, decision in unmatched:
             print(f"  {item.artist} - {item.track} | {decision.notes}")
+
+
+def _rate_limit_delay(error: RateLimitError, attempt_index: int) -> float:
+    match = RETRY_AFTER_PATTERN.search(str(error))
+    if match:
+        return float(match.group(1)) + 1.0
+    return min(60.0, 2.0 ** attempt_index)
+
+
+def _no_match_decision(item: BuyMusicClubItem, notes: str) -> SpotifyWebMatch:
+    return SpotifyWebMatch(
+        source_id=item.source_id,
+        decision="no_match",
+        link_type="",
+        spotify_url="",
+        spotify_title="",
+        confidence=0.0,
+        notes=notes,
+    )
+
+
+def _match_album_item_with_retries(
+    item: BuyMusicClubItem,
+    *,
+    model: str,
+    retries: int,
+    print_lock: Lock,
+) -> tuple[SpotifyWebMatch, int]:
+    total_attempts = retries + 1
+    for attempt_index in range(total_attempts):
+        try:
+            decisions = choose_album_matches_with_openai([item], model=model)
+            return decisions[item.source_id], attempt_index + 1
+        except RateLimitError as error:
+            if attempt_index >= retries:
+                return (
+                    _no_match_decision(
+                        item,
+                        f"OpenAI rate limit persisted after {total_attempts} attempts: {error}",
+                    ),
+                    attempt_index + 1,
+                )
+            delay = _rate_limit_delay(error, attempt_index)
+            with print_lock:
+                print(
+                    f"  rate limited | retry {attempt_index + 1}/{retries}"
+                    f" in {delay:.1f}s | {item.artist} - {item.track}",
+                    flush=True,
+                )
+            time.sleep(delay)
+        except Exception as error:
+            return (
+                _no_match_decision(item, f"Spotify album matching failed for this item: {error}"),
+                attempt_index + 1,
+            )
+
+    return _no_match_decision(item, "Spotify album matching failed unexpectedly."), total_attempts
+
+
+def _match_page_items_to_albums(
+    items: list[BuyMusicClubItem],
+    *,
+    model: str,
+) -> dict[str, SpotifyWebMatch]:
+    concurrency = _env_int(
+        "SPOTIFY_AUTOMATION_MATCH_CONCURRENCY",
+        DEFAULT_MATCH_CONCURRENCY,
+        minimum=1,
+        maximum=len(items),
+    )
+    retries = _env_int("SPOTIFY_AUTOMATION_MATCH_RETRIES", DEFAULT_MATCH_RETRIES, minimum=0)
+    print(
+        f"Matching {len(items)} item(s) with {model};"
+        f" concurrency={concurrency}, retries={retries}.",
+        flush=True,
+    )
+
+    print_lock = Lock()
+    decisions: dict[str, SpotifyWebMatch] = {}
+    completed = 0
+
+    with ThreadPoolExecutor(max_workers=concurrency) as executor:
+        future_map = {
+            executor.submit(
+                _match_album_item_with_retries,
+                item,
+                model=model,
+                retries=retries,
+                print_lock=print_lock,
+            ): item
+            for item in items
+        }
+
+        for future in as_completed(future_map):
+            item = future_map[future]
+            completed += 1
+            try:
+                decision, attempts = future.result()
+            except Exception as error:
+                decision = _no_match_decision(item, f"Spotify album matching crashed for this item: {error}")
+                attempts = 1
+
+            decisions[item.source_id] = decision
+            retry_note = f" after {attempts} attempts" if attempts > 1 else ""
+            with print_lock:
+                if decision.decision == "match":
+                    print(
+                        f"[{completed:>2}/{len(items)}] matched{retry_note} |"
+                        f" {item.artist} - {item.track} -> {decision.spotify_url}",
+                        flush=True,
+                    )
+                else:
+                    print(
+                        f"[{completed:>2}/{len(items)}] no match{retry_note} |"
+                        f" {item.artist} - {item.track} | {decision.notes}",
+                        flush=True,
+                    )
+
+    return decisions
 
 
 def _sync_issue(
@@ -217,8 +360,7 @@ def _sync_web_page(
     matched_entries: list[SpotifyEntry] = []
     unmatched: list[tuple[BuyMusicClubItem, SpotifyWebMatch]] = []
 
-    print(f"Asking {model} to web-search Spotify albums for {len(pending_items)} item(s)...")
-    web_decisions = choose_album_matches_with_openai(pending_items, model=model)
+    web_decisions = _match_page_items_to_albums(pending_items, model=model)
     for item in pending_items:
         decision = web_decisions[item.source_id]
         entry = _entry_from_web_match(item, decision)
