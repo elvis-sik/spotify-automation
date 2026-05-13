@@ -11,6 +11,7 @@ from spotify_automation.utils import (
     artist_similarity,
     clamp_confidence,
     compact_whitespace,
+    normalize_text,
     similarity,
     strip_markdown_fences,
 )
@@ -150,12 +151,23 @@ def heuristic_score(item: BuyMusicClubItem, candidate: SpotifyCandidate) -> floa
 
 def collect_candidates(sp, item: BuyMusicClubItem, *, limit: int = DEFAULT_CANDIDATE_LIMIT) -> list[SpotifyCandidate]:
     release_hint = item.release_title or item.track
-    search_specs = [
+    raw_search_specs = [
         ("track_exact", "track", f'track:{item.track} artist:{item.artist}'),
         ("track_broad", "track", f"{item.artist} {item.track}"),
+        ("track_normalized", "track", f"{item.artist} {normalize_text(item.track)}"),
         ("album_exact", "album", f'album:{release_hint} artist:{item.artist}'),
         ("album_broad", "album", f"{item.artist} {release_hint}"),
+        ("album_normalized", "album", f"{item.artist} {normalize_text(release_hint)}"),
     ]
+    search_specs = []
+    seen_queries: set[tuple[str, str]] = set()
+    for query_hint, search_type, query in raw_search_specs:
+        normalized_query = compact_whitespace(query)
+        query_key = (search_type, normalized_query)
+        if not normalized_query or query_key in seen_queries:
+            continue
+        search_specs.append((query_hint, search_type, normalized_query))
+        seen_queries.add(query_key)
 
     candidates: dict[str, SpotifyCandidate] = {}
     for query_hint, search_type, query in search_specs:

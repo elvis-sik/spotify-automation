@@ -108,6 +108,25 @@ def _entry_from_web_match(item: BuyMusicClubItem, decision: SpotifyWebMatch) -> 
     )
 
 
+def _web_match_from_heuristic_decision(
+    item: BuyMusicClubItem,
+    decision: MatchDecision,
+    candidate_lookup: dict[str, SpotifyCandidate],
+) -> SpotifyWebMatch | None:
+    if decision.decision != "match" or not decision.selected_candidate_id:
+        return None
+    candidate = candidate_lookup[decision.selected_candidate_id]
+    return SpotifyWebMatch(
+        source_id=item.source_id,
+        decision="match",
+        link_type=candidate.link_type,
+        spotify_url=candidate.spotify_url,
+        spotify_title=candidate.title,
+        confidence=decision.confidence,
+        notes=f"Spotify API fallback after OpenAI no-match. {decision.notes}",
+    )
+
+
 def _print_issue_summary(issue) -> None:
     print(f"Issue: {issue.title}")
     print(f"Published at: {issue.published_at}")
@@ -269,6 +288,56 @@ def _match_issue_items_to_spotify(
     return _match_items_with_openai(items, model=model, album_only=False)
 
 
+def _fill_issue_openai_misses_from_spotify_api(
+    items: list[BuyMusicClubItem],
+    decisions: dict[str, SpotifyWebMatch],
+) -> dict[str, SpotifyWebMatch]:
+    missed_items = [
+        item
+        for item in items
+        if decisions[item.source_id].decision != "match" or not decisions[item.source_id].spotify_url
+    ]
+    if not missed_items:
+        return decisions
+
+    try:
+        search_client = get_search_client()
+    except Exception as error:
+        print(f"Spotify API fallback skipped for {len(missed_items)} OpenAI miss(es): {error}")
+        return decisions
+
+    print(f"Checking {len(missed_items)} OpenAI no-match item(s) with Spotify API fallback...")
+    candidate_map: dict[str, list[SpotifyCandidate]] = {}
+    for item in missed_items:
+        candidates = collect_candidates(search_client, item)
+        candidate_map[item.source_id] = candidates
+        print(f"  Collected {len(candidates)} Spotify candidates for {item.artist} - {item.track}")
+
+    heuristic_decisions = choose_matches_heuristically(missed_items, candidate_map)
+    merged = dict(decisions)
+    for item in missed_items:
+        original = decisions[item.source_id]
+        candidates = {candidate.candidate_id: candidate for candidate in candidate_map.get(item.source_id, [])}
+        fallback_decision = heuristic_decisions[item.source_id]
+        fallback_match = _web_match_from_heuristic_decision(item, fallback_decision, candidates)
+        if fallback_match is None:
+            merged[item.source_id] = SpotifyWebMatch(
+                source_id=original.source_id,
+                decision=original.decision,
+                link_type=original.link_type,
+                spotify_url=original.spotify_url,
+                spotify_title=original.spotify_title,
+                confidence=original.confidence,
+                notes=f"{original.notes} Spotify API fallback: {fallback_decision.notes}",
+            )
+            continue
+
+        merged[item.source_id] = fallback_match
+        print(f"  Spotify API fallback matched {item.artist} - {item.track} -> {fallback_match.spotify_url}")
+
+    return merged
+
+
 def _match_page_items_to_albums(
     items: list[BuyMusicClubItem],
     *,
@@ -321,6 +390,7 @@ def _sync_issue(
             matched_entries.append(entry)
     else:
         web_decisions = _match_issue_items_to_spotify(pending_items, model=model)
+        web_decisions = _fill_issue_openai_misses_from_spotify_api(pending_items, web_decisions)
         for item in pending_items:
             decision = web_decisions[item.source_id]
             entry = _entry_from_web_match(item, decision)

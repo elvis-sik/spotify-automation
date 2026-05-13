@@ -32,7 +32,7 @@ The intended secrets flow is via 1Password CLI. The checked-in `.env.example` us
 
 `OPENAI_MODEL` defaults to `gpt-5.5`, but you can override it in `.env` if you want a cheaper or different model.
 
-OpenAI-backed Spotify matching runs one item at a time with bounded parallelism. Tune it with:
+OpenAI-backed Spotify matching runs one item at a time with bounded parallelism. For Buy Music Club issues, OpenAI misses are checked again with Spotify's API before the item is left for review. Tune OpenAI matching with:
 
 ```bash
 SPOTIFY_AUTOMATION_MATCH_CONCURRENCY=3
