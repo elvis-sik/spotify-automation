@@ -231,7 +231,8 @@ def _match_items_with_openai(
     target = "Spotify album pages" if album_only else "Spotify album/track pages"
     print(
         f"Matching {len(items)} item(s) against {target} with {model};"
-        f" concurrency={concurrency}, retries={retries}.",
+        f" concurrency={concurrency}, retries={retries}."
+        " Spotify API fallback runs after this OpenAI pass.",
         flush=True,
     )
 

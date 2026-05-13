@@ -19,7 +19,7 @@ from spotify_automation.utils import (
 
 DEFAULT_OPENAI_MODEL = "gpt-5.5"
 DEFAULT_CANDIDATE_LIMIT = 8
-DEFAULT_SEARCH_MARKETS = ("", "US", "CA", "GB", "HK", "TW", "JP", "SG", "AU")
+DEFAULT_SEARCH_MARKETS = ("", "US", "BR", "CA", "GB", "HK", "TW", "JP", "SG", "AU")
 SPOTIFY_URL_PATTERN = re.compile(
     r"^https://open\.spotify\.com/(?:intl-[a-z]{2}/)?(?P<link_type>album|track)/(?P<spotify_id>[A-Za-z0-9]+)(?:[/?#].*)?$"
 )
