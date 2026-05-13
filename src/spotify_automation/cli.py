@@ -266,13 +266,13 @@ def _match_items_with_openai(
             with print_lock:
                 if decision.decision == "match":
                     print(
-                        f"[{completed:>2}/{len(items)}] matched{retry_note} |"
+                        f"[{completed:>2}/{len(items)}] OpenAI matched{retry_note} |"
                         f" {item.artist} - {item.track} -> {decision.spotify_url}",
                         flush=True,
                     )
                 else:
                     print(
-                        f"[{completed:>2}/{len(items)}] no match{retry_note} |"
+                        f"[{completed:>2}/{len(items)}] OpenAI no match{retry_note} |"
                         f" {item.artist} - {item.track} | {decision.notes}",
                         flush=True,
                     )

@@ -37,6 +37,7 @@ OpenAI-backed Spotify matching runs one item at a time with bounded parallelism.
 ```bash
 SPOTIFY_AUTOMATION_MATCH_CONCURRENCY=3
 SPOTIFY_AUTOMATION_MATCH_RETRIES=3
+SPOTIFY_AUTOMATION_SEARCH_MARKETS=US,CA,GB,HK,TW,JP,SG,AU
 ```
 
 ## Usage
