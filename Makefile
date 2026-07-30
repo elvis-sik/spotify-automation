@@ -1,6 +1,6 @@
 UV ?= uv
 
-.PHONY: help setup smoke-test latest-url sync-latest sync-latest-dry-run sync-list sync-page sync-page-dry-run run
+.PHONY: help setup smoke-test latest-url sync-latest sync-latest-dry-run sync-list sync-page sync-page-dry-run tree-of-life-playlist tree-of-life-playlist-dry-run run
 
 help:
 	@printf "Targets:\n"
@@ -12,6 +12,8 @@ help:
 	@printf "  make sync-list LIST_URL=...  Match a specific list URL and sync it\n"
 	@printf "  make sync-page PAGE_URL=...  Extract a web page and save matched albums\n"
 	@printf "  make sync-page-dry-run PAGE_URL=...  Preview a web page album sync\n"
+	@printf "  make tree-of-life-playlist  Create/update the Tree of Life-inspired playlist\n"
+	@printf "  make tree-of-life-playlist-dry-run  Resolve the Tree of Life-inspired tracks only\n"
 	@printf "  make run                   Alias for make sync-latest\n"
 
 setup:
@@ -40,5 +42,11 @@ sync-page:
 sync-page-dry-run:
 	@test -n "$(PAGE_URL)" || (echo "PAGE_URL is required" && exit 1)
 	op run --env-file=.env -- $(UV) run spotify-automation sync-page --url "$(PAGE_URL)" --dry-run
+
+tree-of-life-playlist:
+	scripts/runoff_tree_of_life_playlist.sh
+
+tree-of-life-playlist-dry-run:
+	scripts/runoff_tree_of_life_playlist.sh --dry-run
 
 run: sync-latest

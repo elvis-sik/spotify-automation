@@ -60,9 +60,7 @@ def find_or_create_playlist(sp: spotipy.Spotify, name: str) -> str:
             break
         offset += 50
 
-    user = sp.current_user()
-    playlist = sp.user_playlist_create(
-        user=user["id"],
+    playlist = sp.current_user_playlist_create(
         name=name,
         public=False,
         description="Tracks gathered from Concrete Avalanche issues.",

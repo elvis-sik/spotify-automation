@@ -39,6 +39,20 @@ Rules:
 - Return only JSON matching the requested schema.
 """
 
+TRACK_WEB_SEARCH_SYSTEM_PROMPT = """You match a curated list of classical, soundtrack, and ambient music mentions to Spotify track pages by searching the live web.
+
+Rules:
+- Search the web for each item, focused on real open.spotify.com track pages.
+- Do not invent Spotify URLs. Return a match only when you found an actual Spotify track URL.
+- Return track URLs only, never album, artist, playlist, or search URLs.
+- Classical entries often list the composer as the artist. In those cases, match the named work or movement even if Spotify credits performers, conductors, or ensembles as the track artists.
+- For film-score entries written as "Film: Cue", prefer the soundtrack track for the named cue by the listed composer.
+- Prefer complete, canonical performances over excerpts, remixes, live versions, edits, demos, and compilations unless the source title explicitly asks for them.
+- Minor punctuation, translation, spelling, accent, and language differences are acceptable when the named work and composer/artist line up.
+- If nothing is good enough, return no_match with an empty spotify_url.
+- Return only JSON matching the requested schema.
+"""
+
 ALBUM_WEB_SEARCH_SYSTEM_PROMPT = """You match arbitrary blog music recommendations to Spotify album pages by searching the live web.
 
 Rules:
@@ -421,6 +435,19 @@ def choose_matches_with_openai(
         items,
         model=model,
         instructions=WEB_SEARCH_SYSTEM_PROMPT,
+    )
+
+
+def choose_track_matches_with_openai(
+    items: list[BuyMusicClubItem],
+    *,
+    model: str | None = None,
+) -> dict[str, SpotifyWebMatch]:
+    return _choose_matches_with_openai(
+        items,
+        model=model,
+        instructions=TRACK_WEB_SEARCH_SYSTEM_PROMPT,
+        required_link_type="track",
     )
 
 
