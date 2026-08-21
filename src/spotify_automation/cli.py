@@ -14,7 +14,7 @@ from spotipy.exceptions import SpotifyException
 
 from spotify_automation.audit import run_archive_audit
 from spotify_automation.buy_music_club import fetch_latest_list, fetch_list
-from spotify_automation.catalog import entries_for_list, items_to_process, read_catalog, upsert_entries
+from spotify_automation.catalog import items_to_process, read_catalog, upsert_entries
 from spotify_automation.matcher import (
     choose_matches_heuristically,
     collect_candidates,
@@ -28,6 +28,7 @@ from spotify_automation.spotify import (
     get_search_client,
     get_user_client,
 )
+from spotify_automation.sources import merge_issue_sources
 from spotify_automation.substack import fetch_issue, fetch_latest_issue
 from spotify_automation.web_page import fetch_web_page_list
 
@@ -74,7 +75,21 @@ def _print_issue_summary(issue) -> None:
     print(f"Issue: {issue.title}")
     print(f"Published at: {issue.published_at}")
     print(f"Issue URL: {issue.url}")
-    print(f"Extracted Bandcamp embeds: {len(issue.items)}")
+    print(f"Releases in this run: {len(issue.items)}")
+
+
+def _fetch_latest_source_union():
+    substack_issue = fetch_latest_issue()
+    buy_music_list = fetch_latest_list()
+    combined = merge_issue_sources(substack_issue, buy_music_list)
+    return substack_issue, buy_music_list, combined
+
+
+def _print_source_union_summary(substack_issue, buy_music_list, combined) -> None:
+    print(f"Substack releases: {len(substack_issue.items)}")
+    print(f"Buy Music Club releases: {len(buy_music_list.items)}")
+    print(f"Union releases: {len(combined.items)}")
+    print(f"Buy Music Club URL: {buy_music_list.url}")
 
 
 def _print_match_preview(
@@ -155,11 +170,11 @@ def _sync_issue(
     library_only: bool = False,
 ) -> int:
     catalog_entries = read_catalog()
-    existing_for_issue = entries_for_list(catalog_entries, issue.url)
     pending_items = items_to_process(issue.items, catalog_entries, force_rematch=force_rematch)
+    resolved_items = len(issue.items) - len(pending_items)
 
     _print_issue_summary(issue)
-    print(f"Already matched in CSV: {len(existing_for_issue)}")
+    print(f"Already resolved in CSV: {resolved_items}")
     print(f"Items to process now: {len(pending_items)}")
     if not pending_items:
         print("Nothing new to do for this issue.")
@@ -214,8 +229,9 @@ def command_latest_buy_music_url(_args: argparse.Namespace) -> int:
 
 
 def command_smoke_test(_args: argparse.Namespace | None = None) -> int:
-    issue = fetch_latest_issue()
+    substack_issue, buy_music_list, issue = _fetch_latest_source_union()
     _print_issue_summary(issue)
+    _print_source_union_summary(substack_issue, buy_music_list, issue)
     print("\nFirst three extracted releases:")
     for item in issue.items[:3]:
         print(f"  {item.artist} - {item.track}")
@@ -223,7 +239,7 @@ def command_smoke_test(_args: argparse.Namespace | None = None) -> int:
 
 
 def command_inspect_latest(args: argparse.Namespace) -> int:
-    issue = fetch_latest_issue()
+    substack_issue, buy_music_list, issue = _fetch_latest_source_union()
     if args.json:
         print(
             json.dumps(
@@ -232,6 +248,13 @@ def command_inspect_latest(args: argparse.Namespace) -> int:
                         "title": issue.title,
                         "url": issue.url,
                         "published_at": issue.published_at,
+                    },
+                    "sources": {
+                        "substack_url": substack_issue.url,
+                        "substack_items": len(substack_issue.items),
+                        "buy_music_club_url": buy_music_list.url,
+                        "buy_music_club_items": len(buy_music_list.items),
+                        "union_items": len(issue.items),
                     },
                     "items": [asdict(item) for item in issue.items],
                     "music_urls": issue.music_urls,
@@ -242,6 +265,7 @@ def command_inspect_latest(args: argparse.Namespace) -> int:
         )
     else:
         _print_issue_summary(issue)
+        _print_source_union_summary(substack_issue, buy_music_list, issue)
         for item in issue.items:
             print(f"  {item.bandcamp_type:5} | {item.artist} - {item.track} | {item.bandcamp_url}")
         non_bandcamp_urls = [url for url in issue.music_urls if "bandcamp.com" not in url]
@@ -253,8 +277,10 @@ def command_inspect_latest(args: argparse.Namespace) -> int:
 
 
 def command_sync_latest(args: argparse.Namespace) -> int:
+    substack_issue, buy_music_list, issue = _fetch_latest_source_union()
+    _print_source_union_summary(substack_issue, buy_music_list, issue)
     return _sync_issue(
-        fetch_latest_issue(),
+        issue,
         dry_run=args.dry_run,
         force_rematch=args.force_rematch,
         skip_spotify=args.skip_spotify,
@@ -418,17 +444,17 @@ def build_parser() -> argparse.ArgumentParser:
     latest_bmc = subparsers.add_parser("latest-buy-music-url", help="Print the newest Buy Music Club list URL")
     latest_bmc.set_defaults(func=command_latest_buy_music_url)
 
-    smoke_test_parser = subparsers.add_parser("smoke-test", help="Fetch and parse the latest Substack issue")
+    smoke_test_parser = subparsers.add_parser("smoke-test", help="Fetch and merge the latest source union")
     smoke_test_parser.set_defaults(func=command_smoke_test)
 
     inspect_latest = subparsers.add_parser(
         "inspect-latest",
-        help="List releases extracted from the latest Substack issue",
+        help="List the deduplicated releases from both latest sources",
     )
     inspect_latest.add_argument("--json", action="store_true", help="Emit structured JSON")
     inspect_latest.set_defaults(func=command_inspect_latest)
 
-    sync_latest = subparsers.add_parser("sync-latest", help="Sync the newest Substack issue")
+    sync_latest = subparsers.add_parser("sync-latest", help="Sync the newest Substack and Buy Music Club union")
     _add_sync_options(sync_latest)
     sync_latest.set_defaults(func=command_sync_latest)
 

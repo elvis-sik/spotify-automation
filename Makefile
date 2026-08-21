@@ -7,7 +7,7 @@ help:
 	@printf "  make setup                 Install project dependencies with uv\n"
 	@printf "  make smoke-test            Fetch the latest issue and print a summary\n"
 	@printf "  make latest-url            Print the latest Concrete Avalanche Substack URL\n"
-	@printf "  make inspect-latest        List Bandcamp releases embedded in the latest article\n"
+	@printf "  make inspect-latest        List the latest Substack + Buy Music Club union\n"
 	@printf "  make audit-archive         Compare every article with Buy Music Club and the CSV\n"
 	@printf "  make sync-latest           Match the latest issue and sync it to Spotify\n"
 	@printf "  make sync-latest-dry-run   Match the latest issue without writing anything\n"

@@ -5,11 +5,15 @@ description: Operate and audit this repository's Concrete Avalanche Substack-to-
 
 # Concrete Avalanche Spotify
 
-Treat the Substack article as authoritative. Buy Music Club is only a useful cross-check.
+Use the union of the latest Substack article and latest Buy Music Club list. If a release
+appears in either source, include it for matching and review. Use the Substack prose as
+the authoritative source for editorial context, such as whether an embed is a current
+recommendation or historical background.
 
 ## Latest issue workflow
 
-1. From the repository root, run `uv run spotify-automation inspect-latest --json`.
+1. From the repository root, run `uv run spotify-automation inspect-latest --json`. It
+   reports the Substack count, Buy Music Club count, and deduplicated union count.
 2. Open and read the full issue. The parser reliably extracts Bandcamp embeds, but the
    article may also contain Spotify, Apple Music, YouTube, SoundCloud, or plain-text
    recommendations.

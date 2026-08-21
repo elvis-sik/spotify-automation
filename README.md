@@ -3,11 +3,12 @@
 This project keeps a Spotify library and playlist in sync with Jake Newby's
 [Concrete Avalanche](https://jakenewby.substack.com/) newsletter.
 
-The Substack article is the source of truth. The program discovers the newest article,
-extracts its Bandcamp embeds, searches Spotify deterministically, records confident
+The program uses the deduplicated union of the newest Substack article and newest Buy
+Music Club list: a release present in either source is included. The Substack prose is
+the source of editorial context, while Buy Music Club may contribute releases absent
+from the article. The program searches Spotify deterministically, records confident
 matches in the cumulative CSV, saves them to the Spotify library, and adds their tracks
-to the `Concrete Avalanche` playlist. Buy Music Club remains available as a legacy and
-cross-checking source, but no longer determines what the newest issue is.
+to the `Concrete Avalanche` playlist.
 
 Ambiguous matches and recommendations linked through something other than Bandcamp need
 agent review. The bundled repo skill at
