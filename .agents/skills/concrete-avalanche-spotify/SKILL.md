@@ -30,6 +30,12 @@ recommendation or historical background.
    for a Spotify API shortlist, then use `record-match`. Quote every argument.
 8. Review the CSV diff and the command's Spotify summary before reporting completion.
 
+Library policy: never save an individual track to Liked Songs. For every track match,
+save its best available containing release, preferring a full album, then an EP, then a
+single. Keep playlist behavior recommendation-specific: add the matched track, not every
+track from its containing release. Explicit album recommendations still add the album's
+tracks to the playlist.
+
 Use `op run --env-file=.env --` at the process boundary for commands requiring Spotify
 credentials. Never print or inspect `.env` values.
 
@@ -67,6 +73,10 @@ op run --env-file=.env -- uv run spotify-automation record-match \
 
 Reuse the same source ID for multiple Spotify tracks belonging to one source release. This
 marks the source release resolved while preserving every verified track in the CSV.
+
+If duplicate playlist entries need repair, run `dedupe-playlist`. It preserves the first
+occurrence of each track and removes only later occurrences; verify the final entry and
+unique-track counts after the write.
 
 ## Safety
 

@@ -25,8 +25,10 @@ from spotify_automation.spotify import (
     DEFAULT_PLAYLIST_NAME,
     apply_entries_to_spotify,
     apply_entries_to_spotify_library,
+    find_playlist,
     get_search_client,
     get_user_client,
+    remove_duplicate_playlist_tracks,
 )
 from spotify_automation.sources import merge_issue_sources
 from spotify_automation.substack import fetch_issue, fetch_latest_issue
@@ -211,8 +213,8 @@ def _sync_issue(
         summary = apply_entries_to_spotify(user_client, matched_entries, playlist_name=playlist_name)
         print(
             "\nSpotify sync complete:"
-            f" saved {summary['albums_saved']} albums,"
-            f" saved {summary['tracks_saved']} tracks,"
+            f" saved {summary['albums_saved']} release containers,"
+            f" resolved {summary['track_matches_resolved']} track matches without liking them,"
             f" added {summary['playlist_tracks_added']} new playlist tracks."
         )
     return 0
@@ -427,6 +429,17 @@ def command_search(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_dedupe_playlist(args: argparse.Namespace) -> int:
+    playlist_name = args.playlist_name or os.environ.get("SPOTIFY_PLAYLIST_NAME", DEFAULT_PLAYLIST_NAME)
+    user_client = get_user_client()
+    playlist_id = find_playlist(user_client, playlist_name)
+    if not playlist_id:
+        raise RuntimeError(f"Spotify playlist not found: {playlist_name}")
+    summary = remove_duplicate_playlist_tracks(user_client, playlist_id)
+    print(json.dumps(summary, sort_keys=True))
+    return 0
+
+
 def _add_sync_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--dry-run", action="store_true", help="Do not write the CSV or touch Spotify")
     parser.add_argument("--force-rematch", action="store_true", help="Reprocess catalogued items")
@@ -512,6 +525,13 @@ def build_parser() -> argparse.ArgumentParser:
     search.add_argument("--type", choices=("album", "track", "any"), default="any")
     search.add_argument("--limit", type=int, default=8)
     search.set_defaults(func=command_search)
+
+    dedupe_playlist = subparsers.add_parser(
+        "dedupe-playlist",
+        help="Remove repeated track occurrences while preserving the first occurrence",
+    )
+    dedupe_playlist.add_argument("--playlist-name", default=None)
+    dedupe_playlist.set_defaults(func=command_dedupe_playlist)
 
     return parser
 

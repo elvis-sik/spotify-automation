@@ -10,6 +10,12 @@ from the article. The program searches Spotify deterministically, records confid
 matches in the cumulative CSV, saves them to the Spotify library, and adds their tracks
 to the `Concrete Avalanche` playlist.
 
+The library policy is container-only: album matches save the album, while track matches
+resolve to the best available containing release in the order album, EP, then single.
+The automation never adds individual tracks to Liked Songs. A track recommendation still
+adds only that track to the playlist; resolving its library container does not add the
+whole album to the playlist.
+
 Ambiguous matches and recommendations linked through something other than Bandcamp need
 agent review. The bundled repo skill at
 `.agents/skills/concrete-avalanche-spotify/SKILL.md` describes that workflow. The program
@@ -69,6 +75,13 @@ Spotify catalog:
 ```bash
 make audit-archive
 uv run spotify-automation audit-archive --format csv > archive-audit.csv
+```
+
+To remove repeated playlist occurrences while keeping the first occurrence and its
+position:
+
+```bash
+op run --env-file=.env -- uv run spotify-automation dedupe-playlist
 ```
 
 ## Matching and agent review

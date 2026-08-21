@@ -1,6 +1,6 @@
 UV ?= uv
 
-.PHONY: help setup smoke-test latest-url inspect-latest audit-archive sync-latest sync-latest-dry-run sync-issue sync-list sync-page sync-page-dry-run tree-of-life-playlist tree-of-life-playlist-dry-run run
+.PHONY: help setup smoke-test latest-url inspect-latest audit-archive dedupe-playlist sync-latest sync-latest-dry-run sync-issue sync-list sync-page sync-page-dry-run tree-of-life-playlist tree-of-life-playlist-dry-run run
 
 help:
 	@printf "Targets:\n"
@@ -9,6 +9,7 @@ help:
 	@printf "  make latest-url            Print the latest Concrete Avalanche Substack URL\n"
 	@printf "  make inspect-latest        List the latest Substack + Buy Music Club union\n"
 	@printf "  make audit-archive         Compare every article with Buy Music Club and the CSV\n"
+	@printf "  make dedupe-playlist       Remove later occurrences of duplicate playlist tracks\n"
 	@printf "  make sync-latest           Match the latest issue and sync it to Spotify\n"
 	@printf "  make sync-latest-dry-run   Match the latest issue without writing anything\n"
 	@printf "  make sync-issue ISSUE_URL=...  Match a specific Substack issue and sync it\n"
@@ -33,6 +34,9 @@ inspect-latest:
 
 audit-archive:
 	$(UV) run spotify-automation audit-archive
+
+dedupe-playlist:
+	op run --env-file=.env -- $(UV) run spotify-automation dedupe-playlist
 
 sync-latest:
 	op run --env-file=.env -- $(UV) run spotify-automation sync-latest

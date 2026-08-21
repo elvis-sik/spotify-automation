@@ -1,8 +1,8 @@
 # Concrete Avalanche archive audit — 2026-08-21
 
-This is a read-only audit checkpoint. It records what is known, what has been manually
-reviewed against article context, and what still needs Spotify matching. No Spotify
-library, playlist, or CSV writes were made during this audit.
+This audit began as a read-only checkpoint and was followed by an authorized repair. It
+records what was manually reviewed against article context, what was changed in Spotify,
+and what still needs matching.
 
 ## Full archive inventory
 
@@ -57,11 +57,10 @@ text and classified below.
 | 2022-10-04 | [肖骏, Leah Dou — Somberton](https://open.spotify.com/track/2X9XKRfa3YDKk0fjQZ9XJn) | track | Track singled out while recommending its new album. |
 | 2022-09-21 | [Lava Ox Sea — Concrete Avalanche](https://open.spotify.com/track/5ahfjdqG5KN5r37aHTlLSe) | track | Deliberate namesake exit-music recommendation. |
 
-These are high-confidence historical repair candidates. Account state still needs to be
-checked before calling them missing from the user's saved library: the existing OAuth
-grant has library-write but not library-read permission. All 17 are, however, confirmed
-absent from the `Concrete Avalanche` playlist, so they did not flow through this
-automation.
+These 17 recommendations were repaired after review. Their 17 release containers were
+saved to the library. The 11 album recommendations contributed all of their tracks to
+the playlist; the 6 track recommendations contributed only the cited track while their
+best available container was saved to the library.
 
 ### Context only (6)
 
@@ -90,9 +89,16 @@ Spotify also changed playlist rows from a `track` field to an `item` field. The 
 parser therefore treated the existing playlist as empty. It now accepts both response
 shapes, preventing future syncs from blindly re-adding every selected track. At audit
 time, the playlist contained 1,980 entries representing 1,633 unique tracks: 347 entries
-were duplicates. This audit did not remove or reorder any playlist entries. The three
-tracks from the latest issue, including both YEHAIYAHAN/Tulipa Ruiz collaborations, are
-present in the corrected playlist view.
+were duplicates. The duplicates were removed and the 111 tracks from the verified
+historical repairs were added. Final verification found 1,744 entries, 1,744 unique
+tracks, and zero duplicates.
+
+The permanent library policy is container-only. Track recommendations are never saved
+directly to Liked Songs. They resolve to the best available release in the order album,
+EP, then single. The three direct track saves from the latest issue were migrated: `阴天`
+now saves the album `挽歌`, while both YEHAIYAHAN/Tulipa Ruiz collaborations save their
+single containers. The three direct track likes were removed, while all three tracks
+remain in the playlist.
 
 ## Remaining audit queue
 
