@@ -39,6 +39,12 @@ class ArchiveAuditTests(unittest.TestCase):
             "music.youtube.com/playlist?list=OLAK123",
         )
 
+    def test_canonical_music_url_unifies_spotify_embed_and_public_urls(self) -> None:
+        self.assertEqual(
+            canonical_music_url("https://open.spotify.com/embed/album/abc?utm_source=generator"),
+            canonical_music_url("https://open.spotify.com/album/abc?si=tracking"),
+        )
+
     def test_classifies_catalogued_unmatched_and_article_only_items(self) -> None:
         article_url = "https://jakenewby.substack.com/p/issue"
         bmc_url = "https://www.buymusic.club/list/issue"

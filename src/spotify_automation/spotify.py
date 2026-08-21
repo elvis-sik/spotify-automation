@@ -122,7 +122,9 @@ def get_playlist_track_ids(sp: spotipy.Spotify, playlist_id: str) -> set[str]:
     while True:
         page = sp.playlist_items(playlist_id, limit=100, offset=offset)
         for item in page["items"]:
-            track = item.get("track") or {}
+            # Spotify's current Web API names this field `item`; older responses and
+            # Spotipy fixtures use `track`. Accept both shapes during the migration.
+            track = item.get("track") or item.get("item") or {}
             track_id = track.get("id")
             if track_id:
                 track_ids.add(track_id)

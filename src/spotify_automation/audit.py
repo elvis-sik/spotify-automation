@@ -49,6 +49,8 @@ def canonical_music_url(url: str) -> str:
     parsed = urllib.parse.urlsplit(url.strip())
     hostname = (parsed.hostname or "").lower()
     path = urllib.parse.unquote(parsed.path).rstrip("/")
+    if hostname == "open.spotify.com" and path.startswith("/embed/"):
+        path = path.removeprefix("/embed")
     identity_keys: tuple[str, ...] = ()
     if hostname.endswith("youtube.com") or hostname == "youtu.be":
         identity_keys = ("list", "v")
@@ -194,6 +196,13 @@ def run_archive_audit() -> tuple[list[ArchiveAuditRecord], list[ArchiveMusicLink
     for provider in sorted({link.provider for link in music_links}):
         summary[f"{provider}_link_occurrences"] = sum(
             1 for link in music_links if link.provider == provider
+        )
+        summary[f"unique_{provider}_links"] = len(
+            {
+                canonical_music_url(link.music_url)
+                for link in music_links
+                if link.provider == provider
+            }
         )
     for status in ("unmatched_catalog", "absent_from_buy_music_club"):
         summary[f"unique_{status}"] = len(
