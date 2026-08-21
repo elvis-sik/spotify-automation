@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import re
 from pathlib import Path
 
 from spotify_automation.models import CSV_COLUMNS, BuyMusicClubItem, SpotifyEntry
@@ -8,6 +9,7 @@ from spotify_automation.utils import normalize_text
 
 
 DATA_PATH = Path(__file__).resolve().parents[2] / "data" / "concrete_avalanche_spotify_cumulative.csv"
+SOURCE_ID_NOTE_PATTERN = re.compile(r"(?:^|;\s*)source_id=([^;]+)")
 
 
 def entry_key(list_url: str, artist: str, track: str) -> tuple[str, str, str]:
@@ -35,6 +37,15 @@ def existing_index(entries: list[SpotifyEntry]) -> dict[tuple[str, str, str], Sp
     return {entry_key(entry.list_url, entry.artist, entry.track): entry for entry in entries}
 
 
+def source_id_from_entry(entry: SpotifyEntry) -> str:
+    match = SOURCE_ID_NOTE_PATTERN.search(entry.notes)
+    return match.group(1).strip() if match else ""
+
+
+def resolved_source_ids(entries: list[SpotifyEntry]) -> set[str]:
+    return {source_id for entry in entries if (source_id := source_id_from_entry(entry))}
+
+
 def items_to_process(
     issue_items: list[BuyMusicClubItem],
     entries: list[SpotifyEntry],
@@ -44,7 +55,12 @@ def items_to_process(
     if force_rematch:
         return issue_items
     index = existing_index(entries)
-    return [item for item in issue_items if item_key(item) not in index]
+    source_ids = resolved_source_ids(entries)
+    return [
+        item
+        for item in issue_items
+        if item_key(item) not in index and item.source_id not in source_ids
+    ]
 
 
 def upsert_entries(new_entries: list[SpotifyEntry], path: Path = DATA_PATH) -> tuple[int, int]:
@@ -71,7 +87,7 @@ def upsert_entries(new_entries: list[SpotifyEntry], path: Path = DATA_PATH) -> t
             added += 1
 
     with path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=CSV_COLUMNS)
+        writer = csv.DictWriter(handle, fieldnames=CSV_COLUMNS, lineterminator="\r\n")
         writer.writeheader()
         writer.writerows(rows)
 

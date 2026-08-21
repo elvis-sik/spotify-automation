@@ -1,109 +1,21 @@
 from __future__ import annotations
 
-import json
 import os
-import re
 
-from openai import OpenAI
-
-from spotify_automation.models import BuyMusicClubItem, MatchDecision, SpotifyCandidate, SpotifyWebMatch
+from spotify_automation.models import BuyMusicClubItem, MatchDecision, SpotifyCandidate
 from spotify_automation.utils import (
     artist_similarity,
-    clamp_confidence,
     compact_whitespace,
     normalize_text,
     similarity,
-    strip_markdown_fences,
 )
 
 
-DEFAULT_OPENAI_MODEL = "gpt-5.5"
 DEFAULT_CANDIDATE_LIMIT = 8
 DEFAULT_SEARCH_MARKETS = ("BR", "")
 DEFAULT_MAX_SEARCH_REQUESTS_PER_ITEM = 8
 CONFIDENT_CANDIDATE_SCORE = 0.98
-SPOTIFY_URL_PATTERN = re.compile(
-    r"^https://open\.spotify\.com/(?:intl-[a-z]{2}/)?(?P<link_type>album|track)/(?P<spotify_id>[A-Za-z0-9]+)(?:[/?#].*)?$"
-)
-
-WEB_SEARCH_SYSTEM_PROMPT = """You match Buy Music Club song mentions to Spotify albums or tracks by searching the live web.
-
-Rules:
-- Search the web for each item, focused on real open.spotify.com album and track pages.
-- Do not invent Spotify URLs. Return a match only when you found an actual Spotify album or track URL.
-- Prefer an album when it clearly corresponds to the source release and contains the mentioned song, or is the obvious single/EP carrying it.
-- Prefer a track when it is the clearest exact song match and the album/release evidence is weaker.
-- Reject remixes, live versions, demos, edits, instrumentals, and alternate versions unless the source title explicitly asks for them.
-- Minor punctuation, transliteration, and multilingual title differences are acceptable when the artist and release context line up.
-- If nothing is good enough, return no_match with an empty spotify_url.
-- Return only JSON matching the requested schema.
-"""
-
-TRACK_WEB_SEARCH_SYSTEM_PROMPT = """You match a curated list of classical, soundtrack, and ambient music mentions to Spotify track pages by searching the live web.
-
-Rules:
-- Search the web for each item, focused on real open.spotify.com track pages.
-- Do not invent Spotify URLs. Return a match only when you found an actual Spotify track URL.
-- Return track URLs only, never album, artist, playlist, or search URLs.
-- Classical entries often list the composer as the artist. In those cases, match the named work or movement even if Spotify credits performers, conductors, or ensembles as the track artists.
-- For film-score entries written as "Film: Cue", prefer the soundtrack track for the named cue by the listed composer.
-- Prefer complete, canonical performances over excerpts, remixes, live versions, edits, demos, and compilations unless the source title explicitly asks for them.
-- Minor punctuation, translation, spelling, accent, and language differences are acceptable when the named work and composer/artist line up.
-- If nothing is good enough, return no_match with an empty spotify_url.
-- Return only JSON matching the requested schema.
-"""
-
-ALBUM_WEB_SEARCH_SYSTEM_PROMPT = """You match arbitrary blog music recommendations to Spotify album pages by searching the live web.
-
-Rules:
-- Search the web for each item, focused on real open.spotify.com album pages.
-- Do not invent Spotify URLs. Return a match only when you found an actual Spotify album URL.
-- For albums, EPs, singles, and releases, return the matching Spotify album page.
-- For individual songs or tracks, return the best Spotify album/single/EP page that contains that song.
-- Prefer the original release or obvious single/EP over compilations, remixes, live versions, demos, edits, instrumentals, and alternate versions unless the source explicitly asks for them.
-- Minor punctuation, transliteration, and multilingual title differences are acceptable when the artist and release context line up.
-- If you cannot find a suitable album page, return no_match with an empty spotify_url.
-- Return only JSON matching the requested schema.
-"""
-
-WEB_SEARCH_RESPONSE_FORMAT = {
-    "type": "json_schema",
-    "name": "spotify_web_matches",
-    "strict": True,
-    "schema": {
-        "type": "object",
-        "properties": {
-            "matches": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "source_id": {"type": "string"},
-                        "decision": {"type": "string", "enum": ["match", "no_match"]},
-                        "spotify_link_type": {"type": "string", "enum": ["album", "track", ""]},
-                        "spotify_url": {"type": "string"},
-                        "spotify_title": {"type": "string"},
-                        "confidence": {"type": "number"},
-                        "notes": {"type": "string"},
-                    },
-                    "required": [
-                        "source_id",
-                        "decision",
-                        "spotify_link_type",
-                        "spotify_url",
-                        "spotify_title",
-                        "confidence",
-                        "notes",
-                    ],
-                    "additionalProperties": False,
-                },
-            },
-        },
-        "required": ["matches"],
-        "additionalProperties": False,
-    },
-}
-
+DEFAULT_AUTO_MATCH_THRESHOLD = 0.90
 
 def _artist_names(raw_artists: list[dict[str, object]]) -> str:
     return ", ".join(str(artist["name"]) for artist in raw_artists)
@@ -171,7 +83,20 @@ def _max_search_requests_per_item() -> int:
 
 def spotify_search_settings_summary() -> str:
     markets = ", ".join(market or "any" for market in _search_markets())
-    return f"markets=[{markets}], max_requests_per_item={_max_search_requests_per_item()}"
+    return (
+        f"markets=[{markets}], max_requests_per_item={_max_search_requests_per_item()},"
+        f" auto_match_threshold={_auto_match_threshold():.2f}"
+    )
+
+
+def _auto_match_threshold() -> float:
+    raw_value = os.environ.get("SPOTIFY_AUTOMATION_AUTO_MATCH_THRESHOLD")
+    if raw_value is None:
+        return DEFAULT_AUTO_MATCH_THRESHOLD
+    try:
+        return max(0.0, min(1.0, float(raw_value)))
+    except ValueError:
+        return DEFAULT_AUTO_MATCH_THRESHOLD
 
 
 def heuristic_score(item: BuyMusicClubItem, candidate: SpotifyCandidate) -> float:
@@ -260,13 +185,13 @@ def choose_matches_heuristically(items: list[BuyMusicClubItem], candidate_map: d
             continue
 
         top_candidate = candidates[0]
-        if top_candidate.heuristic_score < 0.78:
+        if top_candidate.heuristic_score < _auto_match_threshold():
             decisions[item.source_id] = MatchDecision(
                 source_id=item.source_id,
                 decision="no_match",
                 selected_candidate_id=None,
                 confidence=top_candidate.heuristic_score,
-                notes="Heuristic fallback could not find a confident enough match.",
+                notes="Deterministic Spotify search could not find a confident enough match.",
             )
             continue
 
@@ -275,190 +200,6 @@ def choose_matches_heuristically(items: list[BuyMusicClubItem], candidate_map: d
             decision="match",
             selected_candidate_id=top_candidate.candidate_id,
             confidence=top_candidate.heuristic_score,
-            notes="Heuristic fallback selected the top Spotify candidate.",
+            notes="Deterministic Spotify search selected the top candidate.",
         )
     return decisions
-
-
-def _build_web_search_payload(items: list[BuyMusicClubItem]) -> dict[str, object]:
-    issue = items[0]
-    return {
-        "issue": {
-            "title": issue.list_title,
-            "list_url": issue.list_url,
-            "published_at": issue.published_at,
-        },
-        "items": [
-            {
-                "source_id": item.source_id,
-                "artist": item.artist,
-                "track": item.track,
-                "release_title": item.release_title,
-                "source_item_type": item.bandcamp_type,
-                "bandcamp_type": item.bandcamp_type,
-                "bandcamp_url": item.bandcamp_url,
-                "label": item.label,
-            }
-            for item in items
-        ],
-    }
-
-
-def _response_output_text(response) -> str:
-    output_text = getattr(response, "output_text", None)
-    if isinstance(output_text, str) and output_text.strip():
-        return output_text
-    raise RuntimeError("OpenAI returned an unexpected response shape.")
-
-
-def _canonical_spotify_url(value: str) -> tuple[str, str] | None:
-    match = SPOTIFY_URL_PATTERN.match((value or "").strip())
-    if not match:
-        return None
-    link_type = match.group("link_type")
-    spotify_id = match.group("spotify_id")
-    return link_type, f"https://open.spotify.com/{link_type}/{spotify_id}"
-
-
-def _choose_matches_with_openai(
-    items: list[BuyMusicClubItem],
-    *,
-    model: str | None = None,
-    instructions: str,
-    required_link_type: str | None = None,
-) -> dict[str, SpotifyWebMatch]:
-    if not os.environ.get("OPENAI_API_KEY"):
-        raise RuntimeError("OPENAI_API_KEY is required to use GPT web-search matching.")
-
-    payload = _build_web_search_payload(items)
-    client = OpenAI()
-    response = client.responses.create(
-        model=model or os.environ.get("OPENAI_MODEL", DEFAULT_OPENAI_MODEL),
-        instructions=instructions,
-        input=json.dumps(payload, ensure_ascii=False),
-        reasoning={"effort": os.environ.get("OPENAI_REASONING_EFFORT", "medium")},
-        tools=[
-            {
-                "type": "web_search",
-                "search_context_size": os.environ.get("OPENAI_WEB_SEARCH_CONTEXT_SIZE", "medium"),
-                "filters": {"allowed_domains": ["open.spotify.com"]},
-            }
-        ],
-        tool_choice="required",
-        max_tool_calls=max(4, min(50, len(items) * 6)),
-        text={"format": WEB_SEARCH_RESPONSE_FORMAT},
-    )
-    parsed = json.loads(strip_markdown_fences(_response_output_text(response)))
-    raw_matches = parsed.get("matches", [])
-
-    item_lookup = {item.source_id: item for item in items}
-    response_lookup = {str(match.get("source_id")): match for match in raw_matches}
-
-    decisions: dict[str, SpotifyWebMatch] = {}
-    for source_id in item_lookup:
-        raw_match = response_lookup.get(source_id)
-        if not raw_match:
-            decisions[source_id] = SpotifyWebMatch(
-                source_id=source_id,
-                decision="no_match",
-                link_type="",
-                spotify_url="",
-                spotify_title="",
-                confidence=0.0,
-                notes="GPT web search did not include a decision for this item.",
-            )
-            continue
-
-        decision = str(raw_match.get("decision") or "no_match").strip().lower()
-        notes = compact_whitespace(str(raw_match.get("notes") or "")) or "No notes provided."
-        confidence = clamp_confidence(raw_match.get("confidence"))
-        spotify_url = str(raw_match.get("spotify_url") or "").strip()
-        spotify_title = compact_whitespace(str(raw_match.get("spotify_title") or ""))
-
-        if decision != "match" or not spotify_url:
-            decisions[source_id] = SpotifyWebMatch(
-                source_id=source_id,
-                decision="no_match",
-                link_type="",
-                spotify_url="",
-                spotify_title="",
-                confidence=confidence,
-                notes=notes,
-            )
-            continue
-
-        canonical = _canonical_spotify_url(spotify_url)
-        if canonical is None:
-            decisions[source_id] = SpotifyWebMatch(
-                source_id=source_id,
-                decision="no_match",
-                link_type="",
-                spotify_url="",
-                spotify_title="",
-                confidence=0.0,
-                notes="GPT web search did not return a valid open.spotify.com album or track URL.",
-            )
-            continue
-
-        link_type, canonical_url = canonical
-        if required_link_type and link_type != required_link_type:
-            decisions[source_id] = SpotifyWebMatch(
-                source_id=source_id,
-                decision="no_match",
-                link_type="",
-                spotify_url="",
-                spotify_title="",
-                confidence=0.0,
-                notes=f"GPT web search returned a Spotify {link_type} URL, but this workflow requires {required_link_type} URLs.",
-            )
-            continue
-
-        decisions[source_id] = SpotifyWebMatch(
-            source_id=source_id,
-            decision="match",
-            link_type=link_type,
-            spotify_url=canonical_url,
-            spotify_title=spotify_title,
-            confidence=confidence,
-            notes=notes,
-        )
-
-    return decisions
-
-
-def choose_matches_with_openai(
-    items: list[BuyMusicClubItem],
-    *,
-    model: str | None = None,
-) -> dict[str, SpotifyWebMatch]:
-    return _choose_matches_with_openai(
-        items,
-        model=model,
-        instructions=WEB_SEARCH_SYSTEM_PROMPT,
-    )
-
-
-def choose_track_matches_with_openai(
-    items: list[BuyMusicClubItem],
-    *,
-    model: str | None = None,
-) -> dict[str, SpotifyWebMatch]:
-    return _choose_matches_with_openai(
-        items,
-        model=model,
-        instructions=TRACK_WEB_SEARCH_SYSTEM_PROMPT,
-        required_link_type="track",
-    )
-
-
-def choose_album_matches_with_openai(
-    items: list[BuyMusicClubItem],
-    *,
-    model: str | None = None,
-) -> dict[str, SpotifyWebMatch]:
-    return _choose_matches_with_openai(
-        items,
-        model=model,
-        instructions=ALBUM_WEB_SEARCH_SYSTEM_PROMPT,
-        required_link_type="album",
-    )

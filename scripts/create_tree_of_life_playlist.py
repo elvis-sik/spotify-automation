@@ -9,11 +9,8 @@ import time
 from dataclasses import dataclass
 from typing import Sequence
 
-from openai import RateLimitError
 from spotipy.exceptions import SpotifyException
 
-from spotify_automation.matcher import DEFAULT_OPENAI_MODEL, choose_track_matches_with_openai
-from spotify_automation.models import BuyMusicClubItem, SpotifyWebMatch
 from spotify_automation.spotify import get_search_client, get_user_client
 from spotify_automation.utils import artist_similarity, compact_whitespace, dedupe_strings, normalize_text, similarity
 
@@ -23,14 +20,7 @@ PLAYLIST_DESCRIPTION = (
     "Sacred minimalism, luminous orchestral elegies, and ambient meditations in the orbit of "
     "Terence Malick's The Tree of Life."
 )
-SOURCE_ID_PREFIX = "tree-of-life-runoff"
-SOURCE_URL = "manual:tree-of-life-runoff"
-DEFAULT_OPENAI_BATCH_SIZE = 8
-DEFAULT_OPENAI_RETRIES = 2
 DEFAULT_FALLBACK_THRESHOLD = 0.62
-SPOTIFY_TRACK_URL_PATTERN = re.compile(
-    r"^https://open\.spotify\.com/(?:intl-[a-z]{2}/)?track/(?P<spotify_id>[A-Za-z0-9]+)(?:[/?#].*)?$"
-)
 
 
 @dataclass(frozen=True)
@@ -161,107 +151,6 @@ REQUESTED_TRACKS: tuple[RequestedTrack, ...] = (
     RequestedTrack("James Newton Howard", "The Fields"),
     RequestedTrack("James Newton Howard", "Hope and Reflection"),
 )
-
-
-def _safe_int_env(name: str, default: int, *, minimum: int = 1) -> int:
-    raw_value = os.environ.get(name)
-    if raw_value is None:
-        return default
-    try:
-        return max(minimum, int(raw_value))
-    except ValueError:
-        return default
-
-
-def _batched(values: Sequence[BuyMusicClubItem], batch_size: int) -> list[list[BuyMusicClubItem]]:
-    return [list(values[index : index + batch_size]) for index in range(0, len(values), batch_size)]
-
-
-def _as_item(index: int, track: RequestedTrack) -> BuyMusicClubItem:
-    return BuyMusicClubItem(
-        source_id=f"{SOURCE_ID_PREFIX}-{index:03d}",
-        list_title=DEFAULT_PLAYLIST_NAME,
-        list_url=SOURCE_URL,
-        list_slug=SOURCE_ID_PREFIX,
-        published_at="",
-        artist=track.artist,
-        track=track.title,
-        release_title="",
-        bandcamp_type="track",
-        bandcamp_url="",
-        label="",
-    )
-
-
-def _no_match(source_id: str, notes: str) -> SpotifyWebMatch:
-    return SpotifyWebMatch(
-        source_id=source_id,
-        decision="no_match",
-        link_type="",
-        spotify_url="",
-        spotify_title="",
-        confidence=0.0,
-        notes=notes,
-    )
-
-
-def _rate_limit_delay(error: RateLimitError, attempt_index: int) -> float:
-    retry_after = getattr(error, "response", None)
-    retry_after_header = getattr(retry_after, "headers", {}).get("retry-after") if retry_after else None
-    if retry_after_header:
-        try:
-            return float(retry_after_header) + 1.0
-        except ValueError:
-            pass
-    return min(60.0, 2.0**attempt_index)
-
-
-def _match_batch_with_openai(
-    batch: list[BuyMusicClubItem],
-    *,
-    model: str,
-    retries: int,
-) -> dict[str, SpotifyWebMatch]:
-    for attempt_index in range(retries + 1):
-        try:
-            return choose_track_matches_with_openai(batch, model=model)
-        except RateLimitError as error:
-            if attempt_index >= retries:
-                break
-            delay = _rate_limit_delay(error, attempt_index)
-            print(f"  OpenAI rate limited; retrying batch in {delay:.1f}s.", flush=True)
-            time.sleep(delay)
-        except Exception as error:
-            message = compact_whitespace(str(error)) or error.__class__.__name__
-            return {item.source_id: _no_match(item.source_id, f"OpenAI matching failed for this batch: {message}") for item in batch}
-    return {item.source_id: _no_match(item.source_id, "OpenAI rate limit persisted for this batch.") for item in batch}
-
-
-def match_with_openai(
-    items: list[BuyMusicClubItem],
-    *,
-    model: str,
-    batch_size: int,
-    retries: int,
-) -> dict[str, SpotifyWebMatch]:
-    batches = _batched(items, batch_size)
-    decisions: dict[str, SpotifyWebMatch] = {}
-    print(f"Matching {len(items)} tracks with OpenAI web search; model={model}, batches={len(batches)}.", flush=True)
-    completed = 0
-    for batch_index, batch in enumerate(batches, start=1):
-        batch_decisions = _match_batch_with_openai(batch, model=model, retries=retries)
-        decisions.update(batch_decisions)
-        matched_count = sum(1 for decision in batch_decisions.values() if decision.decision == "match")
-        completed += len(batch)
-        print(f"  OpenAI batch {batch_index}/{len(batches)}: {matched_count}/{len(batch)} matched ({completed}/{len(items)} total).", flush=True)
-    return decisions
-
-
-def track_id_from_url(url: str) -> str | None:
-    match = SPOTIFY_TRACK_URL_PATTERN.match(url.strip())
-    if not match:
-        return None
-    return match.group("spotify_id")
 
 
 def _title_variants(title: str) -> list[str]:
@@ -396,59 +285,27 @@ def replace_playlist_tracks(sp, playlist_id: str, track_ids: list[str]) -> None:
 def resolve_tracks(
     requested_tracks: Sequence[RequestedTrack],
     *,
-    model: str,
-    skip_openai: bool,
-    openai_batch_size: int,
-    openai_retries: int,
     fallback_threshold: float,
 ) -> tuple[list[str], list[str]]:
-    items = [_as_item(index, track) for index, track in enumerate(requested_tracks, start=1)]
-    track_lookup = {item.source_id: track for item, track in zip(items, requested_tracks, strict=True)}
-
-    decisions: dict[str, SpotifyWebMatch] = {}
-    if skip_openai:
-        print("Skipping OpenAI matching; using Spotify API fallback only.", flush=True)
-    else:
-        decisions = match_with_openai(
-            items,
-            model=model,
-            batch_size=openai_batch_size,
-            retries=openai_retries,
-        )
-
     search_client = get_search_client()
     resolved_track_ids: list[str] = []
     unresolved: list[str] = []
-    openai_matches = 0
-    fallback_matches = 0
 
-    for item in items:
-        requested_track = track_lookup[item.source_id]
-        decision = decisions.get(item.source_id)
-        if decision and decision.decision == "match":
-            track_id = track_id_from_url(decision.spotify_url)
-            if track_id:
-                resolved_track_ids.append(track_id)
-                openai_matches += 1
-                continue
-
+    for requested_track in requested_tracks:
         try:
             fallback = find_spotify_api_fallback(search_client, requested_track, threshold=fallback_threshold)
         except SpotifyException as error:
-            unresolved.append(f"{requested_track.label} | Spotify API fallback failed: {error}")
+            unresolved.append(f"{requested_track.label} | Spotify API search failed: {error}")
             continue
 
         if fallback is None:
-            notes = decisions.get(item.source_id, _no_match(item.source_id, "No OpenAI decision.")).notes
-            unresolved.append(f"{requested_track.label} | {notes}")
+            unresolved.append(f"{requested_track.label} | No sufficiently confident Spotify API result.")
             continue
 
         resolved_track_ids.append(fallback.spotify_id)
-        fallback_matches += 1
 
     print(
-        f"Resolved {len(resolved_track_ids)}/{len(items)} requested tracks "
-        f"({openai_matches} OpenAI, {fallback_matches} Spotify API fallback).",
+        f"Resolved {len(resolved_track_ids)}/{len(requested_tracks)} requested tracks using Spotify API search.",
         flush=True,
     )
     return dedupe_strings(resolved_track_ids), unresolved
@@ -457,22 +314,8 @@ def resolve_tracks(
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Create the Tree of Life-adjacent Spotify playlist.")
     parser.add_argument("--dry-run", action="store_true", help="Resolve tracks but do not create or update the playlist")
-    parser.add_argument("--skip-openai", action="store_true", help="Use Spotify API search only")
     parser.add_argument("--allow-partial", action="store_true", help="Create the playlist even if some tracks are unresolved")
     parser.add_argument("--playlist-name", default=DEFAULT_PLAYLIST_NAME, help="Spotify playlist name")
-    parser.add_argument("--model", default=os.environ.get("OPENAI_MODEL", DEFAULT_OPENAI_MODEL), help="OpenAI model for track matching")
-    parser.add_argument(
-        "--openai-batch-size",
-        type=int,
-        default=_safe_int_env("SPOTIFY_AUTOMATION_TREE_OPENAI_BATCH_SIZE", DEFAULT_OPENAI_BATCH_SIZE),
-        help="Number of requested tracks to send per OpenAI web-search batch",
-    )
-    parser.add_argument(
-        "--openai-retries",
-        type=int,
-        default=_safe_int_env("SPOTIFY_AUTOMATION_TREE_OPENAI_RETRIES", DEFAULT_OPENAI_RETRIES, minimum=0),
-        help="OpenAI rate-limit retries per batch",
-    )
     parser.add_argument(
         "--fallback-threshold",
         type=float,
@@ -486,10 +329,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     track_ids, unresolved = resolve_tracks(
         REQUESTED_TRACKS,
-        model=args.model,
-        skip_openai=args.skip_openai,
-        openai_batch_size=max(1, args.openai_batch_size),
-        openai_retries=max(0, args.openai_retries),
         fallback_threshold=max(0.0, min(1.0, args.fallback_threshold)),
     )
 

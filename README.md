@@ -1,108 +1,121 @@
-## Concrete Avalanche Spotify Automation
+# Concrete Avalanche Spotify Automation
 
-This project now supports the full flow for a new Concrete Avalanche issue:
+This project keeps a Spotify library and playlist in sync with Jake Newby's
+[Concrete Avalanche](https://jakenewby.substack.com/) newsletter.
 
-1. Discover the newest Concrete Avalanche list on Buy Music Club.
-2. Parse the structured artist/title entries from that list.
-3. Ask GPT with web search to find the best Spotify album or track page for each item.
-4. Validate the returned Spotify album/track URL format.
-5. Upsert the results into the cumulative CSV.
-6. Save the matched albums/tracks to your Spotify library and add their tracks to a `Concrete Avalanche` playlist without duplicating tracks already in the playlist.
+The Substack article is the source of truth. The program discovers the newest article,
+extracts its Bandcamp embeds, searches Spotify deterministically, records confident
+matches in the cumulative CSV, saves them to the Spotify library, and adds their tracks
+to the `Concrete Avalanche` playlist. Buy Music Club remains available as a legacy and
+cross-checking source, but no longer determines what the newest issue is.
 
-It also has a separate arbitrary web-page workflow for blog posts or articles that list songs/albums. That flow extracts the music items from the page, finds matching Spotify album pages, and saves those albums to your Spotify library without adding anything to the `Concrete Avalanche` playlist.
-
-The latest list visible during implementation on April 29, 2026 was `April 2026`, published on March 31, 2026:
-<https://www.buymusic.club/list/concrete_avalanche-april-2026>
+Ambiguous matches and recommendations linked through something other than Bandcamp need
+agent review. The bundled repo skill at
+`.agents/skills/concrete-avalanche-spotify/SKILL.md` describes that workflow. The program
+does not call an LLM or require an OpenAI API key.
 
 ## Setup
 
 1. Copy `.env.example` to `.env`.
-2. Fill in:
-   - `SPOTIPY_CLIENT_ID`
-   - `SPOTIPY_CLIENT_SECRET`
-   - `SPOTIPY_REDIRECT_URI`
-   - `OPENAI_API_KEY`
+2. Fill in `SPOTIPY_CLIENT_ID`, `SPOTIPY_CLIENT_SECRET`, and
+   `SPOTIPY_REDIRECT_URI`.
 3. Install dependencies:
 
 ```bash
 make setup
 ```
 
-The intended secrets flow is via 1Password CLI. The checked-in `.env.example` uses `op://...` references, and the `make` targets that need secrets run through `op run --env-file=.env -- ...`.
+The intended secrets flow is through the 1Password CLI. The checked-in example uses
+placeholder `op://` references, and commands that need Spotify credentials run through
+`op run --env-file=.env -- ...`.
 
-`OPENAI_MODEL` defaults to `gpt-5.5`, but you can override it in `.env` if you want a cheaper or different model.
+## Routine workflow
 
-OpenAI-backed Spotify matching runs one item at a time with bounded parallelism. For Buy Music Club issues, OpenAI misses are checked again with Spotify's API before the item is left for review. Tune OpenAI matching with:
-
-```bash
-SPOTIFY_AUTOMATION_MATCH_CONCURRENCY=3
-SPOTIFY_AUTOMATION_MATCH_RETRIES=3
-SPOTIFY_AUTOMATION_SEARCH_MARKETS=BR
-SPOTIFY_AUTOMATION_MAX_SEARCH_REQUESTS_PER_ITEM=8
-```
-
-## Usage
-
-Quick check:
-
-```bash
-make smoke-test
-```
-
-Print the latest Buy Music Club URL:
+Inspect the latest article first:
 
 ```bash
 make latest-url
+make inspect-latest
 ```
 
-Preview the latest issue without writing the CSV or touching Spotify:
+Preview deterministic Spotify matches without changing the CSV or Spotify:
 
 ```bash
 make sync-latest-dry-run
 ```
 
-Do the real run:
+After reviewing the article and the proposed matches, sync it:
 
 ```bash
 make run
 ```
 
-Run a specific list manually:
+For a specific Substack article:
 
 ```bash
-make sync-list LIST_URL=https://www.buymusic.club/list/concrete_avalanche-april-2026
+make sync-issue ISSUE_URL=https://jakenewby.substack.com/p/example-slug
 ```
 
-Preview an arbitrary web page without writing the CSV or touching Spotify:
+For an older Buy Music Club list:
 
 ```bash
-make sync-page-dry-run PAGE_URL=https://example.com/blog/music-list
+make sync-list LIST_URL=https://www.buymusic.club/list/concrete_avalanche-example
 ```
 
-Sync an arbitrary web page for real:
+To compare every archived Substack issue against Buy Music Club and the cumulative
+Spotify catalog:
 
 ```bash
-make sync-page PAGE_URL=https://example.com/blog/music-list
+make audit-archive
+uv run spotify-automation audit-archive --format csv > archive-audit.csv
 ```
 
-The equivalent raw CLI is:
+## Matching and agent review
+
+Spotify can contain several plausible versions of a release: the original, a remix, a
+live take, a compilation appearance, or a reissue. The automatic matcher deliberately
+accepts only high-scoring artist/title results. Tune its behavior with:
 
 ```bash
-uv run spotify-automation sync-page --url https://example.com/blog/music-list
+SPOTIFY_AUTOMATION_SEARCH_MARKETS=BR
+SPOTIFY_AUTOMATION_MAX_SEARCH_REQUESTS_PER_ITEM=8
+SPOTIFY_AUTOMATION_AUTO_MATCH_THRESHOLD=0.90
 ```
 
-## Notes on Matching
-
-Spotify sometimes has several believable matches for the same mention: original track, single, EP, album version, live take, remix, compilation appearance, and so on. By default, this tool lets GPT search the web directly for real `open.spotify.com` album and track pages, then stores the chosen URL, confidence score, and a short note in the CSV.
-
-If you ever want to bypass GPT and use the older Spotify API shortlist + heuristic fallback instead:
+Use `record-match` after an agent has verified an ambiguous Spotify URL:
 
 ```bash
-uv run spotify-automation sync-latest --skip-openai
+op run --env-file=.env -- uv run spotify-automation search \
+  --artist "Artist" --title "Release"
 ```
 
-If you want to re-evaluate items that are already in the CSV:
+Then record the verified result:
 
 ```bash
-uv run spotify-automation sync-latest --force-rematch
+op run --env-file=.env -- uv run spotify-automation record-match \
+  --source-url https://jakenewby.substack.com/p/example-slug \
+  --source-id SOURCE_ID_FROM_INSPECT \
+  --source-title "Issue title" \
+  --artist "Artist" \
+  --title "Release" \
+  --spotify-url https://open.spotify.com/album/EXAMPLE
+```
+
+The command records the match and performs the normal Spotify sync. Add
+`--skip-spotify` to update only the CSV.
+
+## Other workflows
+
+`sync-page` deterministically extracts Bandcamp embeds from another web page:
+
+```bash
+make sync-page-dry-run PAGE_URL=https://example.com/music-article
+make sync-page PAGE_URL=https://example.com/music-article
+```
+
+The separate Tree of Life playlist script also uses Spotify API search only:
+
+```bash
+make tree-of-life-playlist-dry-run
+make tree-of-life-playlist
 ```

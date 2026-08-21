@@ -61,24 +61,6 @@ def artist_similarity(source: str, candidate: str) -> float:
     return max(overall, best_part)
 
 
-def clamp_confidence(value: float | int | str | None) -> float:
-    if value is None:
-        return 0.0
-    try:
-        numeric = float(value)
-    except (TypeError, ValueError):
-        return 0.0
-    return max(0.0, min(1.0, numeric))
-
-
-def strip_markdown_fences(value: str) -> str:
-    text = value.strip()
-    if text.startswith("```"):
-        text = re.sub(r"^```[a-zA-Z0-9_-]*\n?", "", text)
-        text = re.sub(r"\n?```$", "", text)
-    return text.strip()
-
-
 def compact_whitespace(value: str) -> str:
     return " ".join((value or "").split())
 

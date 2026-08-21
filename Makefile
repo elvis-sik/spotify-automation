@@ -1,14 +1,17 @@
 UV ?= uv
 
-.PHONY: help setup smoke-test latest-url sync-latest sync-latest-dry-run sync-list sync-page sync-page-dry-run tree-of-life-playlist tree-of-life-playlist-dry-run run
+.PHONY: help setup smoke-test latest-url inspect-latest audit-archive sync-latest sync-latest-dry-run sync-issue sync-list sync-page sync-page-dry-run tree-of-life-playlist tree-of-life-playlist-dry-run run
 
 help:
 	@printf "Targets:\n"
 	@printf "  make setup                 Install project dependencies with uv\n"
 	@printf "  make smoke-test            Fetch the latest issue and print a summary\n"
-	@printf "  make latest-url            Print the latest Concrete Avalanche list URL\n"
+	@printf "  make latest-url            Print the latest Concrete Avalanche Substack URL\n"
+	@printf "  make inspect-latest        List Bandcamp releases embedded in the latest article\n"
+	@printf "  make audit-archive         Compare every article with Buy Music Club and the CSV\n"
 	@printf "  make sync-latest           Match the latest issue and sync it to Spotify\n"
 	@printf "  make sync-latest-dry-run   Match the latest issue without writing anything\n"
+	@printf "  make sync-issue ISSUE_URL=...  Match a specific Substack issue and sync it\n"
 	@printf "  make sync-list LIST_URL=...  Match a specific list URL and sync it\n"
 	@printf "  make sync-page PAGE_URL=...  Extract a web page and save matched albums\n"
 	@printf "  make sync-page-dry-run PAGE_URL=...  Preview a web page album sync\n"
@@ -25,11 +28,21 @@ smoke-test:
 latest-url:
 	$(UV) run spotify-automation latest-url
 
+inspect-latest:
+	$(UV) run spotify-automation inspect-latest
+
+audit-archive:
+	$(UV) run spotify-automation audit-archive
+
 sync-latest:
 	op run --env-file=.env -- $(UV) run spotify-automation sync-latest
 
 sync-latest-dry-run:
 	op run --env-file=.env -- $(UV) run spotify-automation sync-latest --dry-run
+
+sync-issue:
+	@test -n "$(ISSUE_URL)" || (echo "ISSUE_URL is required" && exit 1)
+	op run --env-file=.env -- $(UV) run spotify-automation sync-issue --url "$(ISSUE_URL)"
 
 sync-list:
 	@test -n "$(LIST_URL)" || (echo "LIST_URL is required" && exit 1)

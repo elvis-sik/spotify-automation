@@ -39,6 +39,7 @@ class BuyMusicClubList:
     description: str
     source_url: str
     items: list[BuyMusicClubItem]
+    music_urls: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -56,28 +57,6 @@ class SpotifyCandidate:
     heuristic_score: float = 0.0
     query_hints: list[str] = field(default_factory=list)
 
-    def llm_payload(self) -> dict[str, object]:
-        payload: dict[str, object] = {
-            "candidate_id": self.candidate_id,
-            "link_type": self.link_type,
-            "spotify_url": self.spotify_url,
-            "title": self.title,
-            "artists": self.artists,
-            "heuristic_score": round(self.heuristic_score, 4),
-        }
-        if self.album_title:
-            payload["album_title"] = self.album_title
-        if self.release_date:
-            payload["release_date"] = self.release_date
-        if self.popularity is not None:
-            payload["popularity"] = self.popularity
-        if self.total_tracks is not None:
-            payload["total_tracks"] = self.total_tracks
-        if self.query_hints:
-            payload["query_hints"] = self.query_hints
-        return payload
-
-
 @dataclass(frozen=True)
 class MatchDecision:
     source_id: str
@@ -85,18 +64,6 @@ class MatchDecision:
     selected_candidate_id: str | None
     confidence: float
     notes: str
-
-
-@dataclass(frozen=True)
-class SpotifyWebMatch:
-    source_id: str
-    decision: str
-    link_type: str
-    spotify_url: str
-    spotify_title: str
-    confidence: float
-    notes: str
-
 
 @dataclass(frozen=True)
 class SpotifyEntry:

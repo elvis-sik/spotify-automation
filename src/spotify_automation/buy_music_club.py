@@ -61,6 +61,19 @@ def fetch_latest_list() -> BuyMusicClubList:
     return _list_from_raw(latest)
 
 
+def fetch_all_lists() -> list[BuyMusicClubList]:
+    data = extract_next_data(_fetch_html(BUY_MUSIC_CLUB_USER_URL))
+    raw_lists = data["props"]["pageProps"]["lists"]
+    return [
+        _list_from_raw(raw_list)
+        for raw_list in sorted(
+            raw_lists,
+            key=lambda raw_list: str(raw_list.get("published_at") or ""),
+            reverse=True,
+        )
+    ]
+
+
 def fetch_list(list_url_or_slug: str) -> BuyMusicClubList:
     if list_url_or_slug.startswith("http://") or list_url_or_slug.startswith("https://"):
         url = list_url_or_slug
